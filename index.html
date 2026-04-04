@@ -58,7 +58,7 @@ let lastResult = null;
 let selectedCity = null;
 let debounceTimer;
 
-/* toggle UI */
+/* UI toggle */
 
 document.querySelectorAll('input[name="mode"]').forEach(r=>{
   r.addEventListener('change',()=>{
@@ -88,39 +88,216 @@ document.getElementById("cityInput").addEventListener("input", function () {
 
   if (query.length < 2) {
     box.innerHTML = "";
+    selectedCity = null;
     return;
   }
 
   debounceTimer = setTimeout(async () => {
 
-    const res = await fetch(
-      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=5`
-    );
+    try {
 
-    const data = await res.json();
-    box.innerHTML = "";
+      const res = await fetch(
+        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=5`
+      );
 
-    if (!data.results) return;
+      const data = await res.json();
+      box.innerHTML = "";
 
-    data.results.forEach(r => {
+      if (!data.results) return;
 
-      const div = document.createElement("div");
-      div.style.padding = "6px";
-      div.style.cursor = "pointer";
-      div.style.borderBottom = "1px solid #eee";
+      data.results.forEach(r => {
 
-      div.innerText = `${r.name}, ${r.country}`;
+        const div = document.createElement("div");
+        div.style.padding = "6px";
+        div.style.cursor = "pointer";
+        div.style.borderBottom = "1px solid #eee";
 
-      div.onclick = () => {
-        selectedCity = r;
-        document.getElementById("cityInput").value = `${r.name}, ${r.country}`;
-        box.innerHTML = "";
-      };
+        div.innerText = `${r.name}, ${r.country}`;
 
-      box.appendChild(div);
-    });
+        div.onclick = () => {
+          selectedCity = r;
+          document.getElementById("cityInput").value = `${r.name}, ${r.country}`;
+          box.innerHTML = "";
+        };
+
+        box.appendChild(div);
+      });
+
+    } catch(e) {
+      console.error("Errore città:", e);
+    }
 
   }, 300);
 });
 
-/*
+/* funzione principale */
+
+async function checkWeather(){
+
+  const resultDiv = document.getElementById("result");
+  const fbBox = document.getElementById("feedbackBox");
+  const fbStatus = document.getElementById("feedbackStatus");
+
+  resultDiv.innerText = "Caricamento...";
+  fbBox.style.display = "none";
+  fbStatus.innerText = "";
+  lastResult = null;
+
+  try {
+
+    const mode = document.querySelector('input[name="mode"]:checked').value;
+    const dt = document.getElementById("datetime").value;
+
+    if (!dt) {
+      resultDiv.innerText = "Seleziona data e ora";
+      return;
+    }
+
+    let lat, lon, label;
+
+    if (mode === "city") {
+
+      if (!selectedCity) {
+        resultDiv.innerText = "Seleziona una città dalla lista";
+        return;
+      }
+
+      lat = selectedCity.latitude;
+      lon = selectedCity.longitude;
+      label = `${selectedCity.name}, ${selectedCity.country}`;
+
+    } else {
+
+      const pos = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject);
+      });
+
+      lat = pos.coords.latitude;
+      lon = pos.coords.longitude;
+      label = "Posizione attuale";
+    }
+
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=apparent_temperature,wind_speed_10m,wind_gusts_10m,relative_humidity_2m,cloudcover,is_day&timezone=auto`;
+
+    let data;
+
+    try {
+      const res = await fetch(url);
+      data = await res.json();
+    } catch (e) {
+      resultDiv.innerText = "Errore nel recupero meteo";
+      return;
+    }
+
+    const times = data.hourly.time;
+    const target = new Date(dt).getTime();
+
+    let bestIndex = 0;
+    let bestDiff = Infinity;
+
+    times.forEach((t, i) => {
+      const diff = Math.abs(new Date(t).getTime() - target);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestIndex = i;
+      }
+    });
+
+    const T = data.hourly.apparent_temperature[bestIndex];
+    const wind = data.hourly.wind_speed_10m[bestIndex];
+    const gusts = data.hourly.wind_gusts_10m[bestIndex];
+    const RH = data.hourly.relative_humidity_2m[bestIndex];
+    const cloud = data.hourly.cloudcover[bestIndex] ?? 0;
+    const isDay = data.hourly.is_day[bestIndex];
+
+    let score = T;
+
+    if (gusts > 25) score -= 2;
+    else if (wind > 15) score -= 1;
+
+    if (cloud < 30 && isDay === 1) score += 1;
+    if (RH > 70 && T < 10) score -= 0.5;
+
+    const profileVal = parseInt(document.getElementById("profile").value);
+    score += profileVal;
+
+    let feeling =
+      score < 8 ? "Freddo" :
+      score < 14 ? "Fresco" :
+      score < 18 ? "Leggermente fresco" :
+      "Ok / caldo leggero";
+
+    let driver =
+      gusts > 25 ? "raffiche" :
+      wind > 15 ? "vento" :
+      (cloud < 30 && isDay === 1) ? "sole" :
+      RH > 70 ? "umidità" :
+      "condizioni stabili";
+
+    let note =
+      gusts > 25 ? "sensazione a tratti più fredda nelle zone esposte" :
+      wind > 15 ? "più freddo del previsto sulle parti esposte" :
+      (cloud < 30 && isDay === 1) ? "al sole si sta meglio" :
+      RH > 70 ? "freddo più penetrante" :
+      "condizioni stabili";
+
+    resultDiv.innerText =
+      `Luogo: ${label}\n` +
+      `Ora: ${times[bestIndex]}\n\n` +
+      `${feeling}\n` +
+      `soprattutto per ${driver}\n` +
+      `${note}`;
+
+    lastResult = {
+      profile: document.getElementById("profile").selectedOptions[0].text,
+      lat, lon,
+      location_label: label,
+      selected_datetime: times[bestIndex],
+      apparent_temperature: T,
+      wind, gusts,
+      humidity: RH,
+      cloudcover: cloud,
+      feeling, driver, note
+    };
+
+    fbBox.style.display = "block";
+
+  } catch (err) {
+    console.error(err);
+    resultDiv.innerText = "Errore inatteso";
+  }
+}
+
+/* feedback */
+
+async function sendFeedback(type){
+
+  const status = document.getElementById("feedbackStatus");
+
+  if(!lastResult){
+    status.innerText = "Errore: nessun dato";
+    return;
+  }
+
+  status.innerText = "Invio...";
+
+  try {
+
+    await fetch(SCRIPT_URL,{
+      method:"POST",
+      mode:"no-cors",
+      headers:{ "Content-Type":"application/json"},
+      body:JSON.stringify({...lastResult, feedback:type})
+    });
+
+    status.innerText = "Feedback inviato";
+
+  } catch(e){
+    status.innerText = "Errore invio";
+  }
+}
+
+</script>
+
+</body>
+</html>
