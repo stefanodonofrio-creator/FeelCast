@@ -58,7 +58,7 @@ let selectedCity = null;
 let debounceTimer;
 
 /* =========================
-   UI BASE
+   UI
 ========================= */
 
 document.querySelectorAll('input[name="mode"]').forEach(radio => {
@@ -78,7 +78,7 @@ document.querySelectorAll('input[name="mode"]').forEach(radio => {
 })();
 
 /* =========================
-   AUTOCOMPLETE CITTÀ
+   AUTOCOMPLETE
 ========================= */
 
 document.getElementById("cityInput").addEventListener("input", function () {
@@ -96,37 +96,30 @@ document.getElementById("cityInput").addEventListener("input", function () {
   debounceTimer = setTimeout(async () => {
     try {
       const res = await fetch(
-        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=5&language=it`
+        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=5`
       );
       const data = await res.json();
 
       box.innerHTML = "";
 
-      if (!data || !data.results) return;
+      if (!data.results) return;
 
       data.results.forEach(r => {
         const div = document.createElement("div");
-        div.style.padding = "6px";
-        div.style.cursor = "pointer";
-        div.style.borderBottom = "1px solid #eee";
         div.innerText = `${r.name}, ${r.country}`;
-
         div.onclick = () => {
           selectedCity = r;
-          document.getElementById("cityInput").value = `${r.name}, ${r.country}`;
+          document.getElementById("cityInput").value = div.innerText;
           box.innerHTML = "";
         };
-
         box.appendChild(div);
       });
-    } catch (e) {
-      console.error("Errore città:", e);
-    }
+    } catch {}
   }, 300);
 });
 
 /* =========================
-   LOGICA METEO
+   LOGICA
 ========================= */
 
 function computeScore(p, profile) {
@@ -138,48 +131,84 @@ function computeScore(p, profile) {
   if (p.wind_gusts > 50) s -= 1;
   else if (p.wind_gusts > 30) s -= 0.5;
 
-  // ☀️ luce (solo di giorno)
-  if (p.is_day === 1) {
-    if (p.cloudcover < 30) s += 1;        // sole diretto
-    else if (p.cloudcover < 70) s += 0.5; // luce diffusa
-  }
+  if (p.is_day === 1 && p.cloudcover < 30) s += 1;
 
-  // 💧 umidità (sempre)
   if (p.humidity > 80 && s < 15) s -= 0.5;
 
   return s + profile;
 }
 
 function classifyFeeling(score) {
-  if (score < 8) return "cold";
-  if (score < 14) return "cool";
-  if (score < 18) return "slightly_cool";
+  if (score < 8) return "È freddo";
+  if (score < 14) return "È fresco";
+  if (score < 18) return "È leggermente fresco";
+  return "È mite";
+}
+
+function getFeelingKey(f) {
+  if (f === "È freddo") return "cold";
+  if (f === "È fresco") return "cool";
+  if (f === "È leggermente fresco") return "slightly_cool";
   return "mild_warm";
 }
 
-function getTrendFromStates(fNow, fNext, events) {
+/* =========================
+   DECISION LAYER
+========================= */
 
-  if (events.sun_loss) return "senza sole si raffredda.";
-  if (events.sun_gain) return "con il sole si scalda.";
-  if (events.gusts) return "arrivano raffiche.";
-  if (events.wind_increase) return "il vento aumenta.";
-
-  const order = ["cold", "cool", "slightly_cool", "mild_warm"];
-  const nowIndex = order.indexOf(fNow);
-  const nextIndex = order.indexOf(fNext);
-
-  if (nextIndex > nowIndex) return "si sentirà più caldo.";
-  if (nextIndex < nowIndex) return "si sentirà più fresco.";
-
-  return "la sensazione resterà simile.";
+function getRisk(feelingKey) {
+  if (feelingKey === "cold") return "high_cold";
+  if (feelingKey === "cool") return "medium_cold";
+  if (feelingKey === "slightly_cool") return "low_cold";
+  return "neutral_or_warm";
 }
 
-function applyTense(text, isFuture) {
-  if (!isFuture) return text;
+function getTrendDirection(fNow, fNext) {
+  const order = ["cold", "cool", "slightly_cool", "mild_warm"];
+  const iNow = order.indexOf(fNow);
+  const iNext = order.indexOf(fNext);
 
-  return text
-    .replace("È ", "Sarà ")
-    .replace("Si sta", "Si starà");
+  if (iNext > iNow) return "warming";
+  if (iNext < iNow) return "cooling";
+  return "stable";
+}
+
+function getDecision(risk, trend) {
+
+  if (risk === "high_cold") {
+    if (trend === "warming") return "layer_now_remove_later";
+    return "layer_now";
+  }
+
+  if (risk === "medium_cold") {
+    if (trend === "warming") return "light_layer_optional";
+    return "light_layer";
+  }
+
+  if (risk === "low_cold") {
+    if (trend === "cooling") return "consider_layer";
+    return "no_layer_needed";
+  }
+
+  if (risk === "neutral_or_warm") {
+    if (trend === "cooling") return "maybe_layer_later";
+    return "no_layer";
+  }
+
+}
+
+function decisionText(code) {
+  const map = {
+    layer_now: "Meglio coprirsi.",
+    layer_now_remove_later: "Meglio coprirsi all’inizio, poi puoi alleggerirti.",
+    light_layer: "Meglio uno strato leggero.",
+    light_layer_optional: "Uno strato leggero può essere utile.",
+    consider_layer: "Potresti volere uno strato in più.",
+    no_layer_needed: "Potresti toglierti uno strato.",
+    maybe_layer_later: "Ora va bene così, ma dopo potresti coprirti.",
+    no_layer: "Si sta bene così."
+  };
+  return map[code];
 }
 
 /* =========================
@@ -187,74 +216,48 @@ function applyTense(text, isFuture) {
 ========================= */
 
 async function checkWeather() {
-  const resultDiv = document.getElementById("result");
-  const fbBox = document.getElementById("feedbackBox");
-  const fbStatus = document.getElementById("feedbackStatus");
 
-  resultDiv.innerText = "Caricamento...";
-  fbBox.style.display = "none";
-  fbStatus.innerText = "";
-  lastResult = null;
+  const resultDiv = document.getElementById("result");
 
   try {
-    const mode = document.querySelector('input[name="mode"]:checked').value;
+
     const dt = document.getElementById("datetime").value;
+    let lat, lon;
 
-    if (!dt) {
-      resultDiv.innerText = "Seleziona data e ora";
-      return;
-    }
-
-    let lat, lon, label;
-
-    if (mode === "city") {
-      if (!selectedCity) {
-        resultDiv.innerText = "Seleziona una città dalla lista";
-        return;
-      }
+    if (document.querySelector('input[name="mode"]:checked').value === "city") {
       lat = selectedCity.latitude;
       lon = selectedCity.longitude;
-      label = `${selectedCity.name}, ${selectedCity.country}`;
     } else {
-      const pos = await new Promise((resolve, reject) =>
-        navigator.geolocation.getCurrentPosition(
-          resolve,
-          () => reject(new Error("GEO_DENIED"))
-        )
+      const pos = await new Promise(res =>
+        navigator.geolocation.getCurrentPosition(res)
       );
-
       lat = pos.coords.latitude;
       lon = pos.coords.longitude;
-      label = "Posizione attuale";
     }
 
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=apparent_temperature,wind_speed_10m,wind_gusts_10m,relative_humidity_2m,cloudcover,is_day&timezone=auto`;
+    const res = await fetch(
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=apparent_temperature,wind_speed_10m,wind_gusts_10m,relative_humidity_2m,cloudcover,is_day&timezone=auto`
+    );
 
-    const res = await fetch(url);
     const data = await res.json();
 
-    if (!data || !data.hourly || !data.hourly.time) {
-      resultDiv.innerText = "Dati meteo non disponibili";
-      return;
-    }
-
     const times = data.hourly.time;
-    const target = new Date(dt + ":00").getTime();
+    const target = new Date(dt).getTime();
 
     let idx = 0;
     let best = Infinity;
 
     times.forEach((t, i) => {
-      const d = Math.abs(new Date(t).getTime() - target);
-      if (d < best) {
-        best = d;
+      const diff = Math.abs(new Date(t).getTime() - target);
+      if (diff < best) {
+        best = diff;
         idx = i;
       }
     });
 
     const nextIdx = Math.min(idx + 1, times.length - 1);
 
-    const nowPoint = {
+    const now = {
       apparent_temperature: data.hourly.apparent_temperature[idx],
       wind_speed: data.hourly.wind_speed_10m[idx],
       wind_gusts: data.hourly.wind_gusts_10m[idx],
@@ -263,7 +266,7 @@ async function checkWeather() {
       is_day: data.hourly.is_day[idx]
     };
 
-    const nextPoint = {
+    const next = {
       apparent_temperature: data.hourly.apparent_temperature[nextIdx],
       wind_speed: data.hourly.wind_speed_10m[nextIdx],
       wind_gusts: data.hourly.wind_gusts_10m[nextIdx],
@@ -272,87 +275,52 @@ async function checkWeather() {
       is_day: data.hourly.is_day[nextIdx]
     };
 
-    const profile = parseInt(document.getElementById("profile").value, 10);
+    const profile = parseInt(document.getElementById("profile").value);
 
-    const sNow = computeScore(nowPoint, profile);
-    const sNext = computeScore(nextPoint, profile);
+    const sNow = computeScore(now, profile);
+    const sNext = computeScore(next, profile);
 
     const fNow = classifyFeeling(sNow);
     const fNext = classifyFeeling(sNext);
 
-    const events = {
-       sun_loss:
-    	nowPoint.is_day === 1 &&
-    	nextPoint.is_day === 1 &&
-    	nowPoint.cloudcover < 30 &&
-    	nextPoint.cloudcover > 60,
-      sun_gain: 
-    	nowPoint.is_day === 1 &&
-   	 nextPoint.is_day === 1 &&
-    	nowPoint.cloudcover > 60 &&
-    	nextPoint.cloudcover < 30,
-      wind_increase: nextPoint.wind_speed - nowPoint.wind_speed > 10,
-      gusts: nowPoint.wind_gusts < 30 && nextPoint.wind_gusts > 40
-    };
+    const keyNow = getFeelingKey(fNow);
+    const keyNext = getFeelingKey(fNext);
 
-    const trend = getTrendFromStates(fNow, fNext, events);
+    /* =========================
+       DECISION
+    ========================= */
 
-    const isFuture = new Date(dt) > new Date();
+    const riskNow = getRisk(keyNow);
+    const trendDirection = getTrendDirection(keyNow, keyNext);
+    const decisionCode = getDecision(riskNow, trendDirection);
 
-    let base = {
-      cold: "È freddo.",
-      cool: "È fresco.",
-      slightly_cool: "È leggermente fresco.",
-      mild_warm: "Si sta bene."
-    }[fNow];
+    /* =========================
+       OUTPUT
+    ========================= */
 
-    base = applyTense(base, isFuture);
+    let trendText = "";
 
-    const output =
-      base + "\n\n" +
-      "Nell’ora successiva " + trend;
-
-    resultDiv.innerText = output;
-
-    fbBox.style.display = "block";
-
-  } catch (e) {
-    console.error(e);
-
-    if (e.message === "GEO_DENIED") {
-      resultDiv.innerText = "Posizione non disponibile";
-      return;
-    }
-
-    resultDiv.innerText = "Errore";
-  }
+if (trendDirection === "warming") {
+  trendText = "Poi si scalda un po’.";
+} else if (trendDirection === "cooling") {
+  trendText = "Poi si rinfresca un po’.";
+} else {
+  trendText = "Resta più o meno così.";
 }
 
-/* =========================
-   FEEDBACK
-========================= */
+resultDiv.innerText =
+  fNow + "\n\n" +
+  trendText + "\n\n" +
+  decisionText(decisionCode);
 
-async function sendFeedback(type) {
-  const status = document.getElementById("feedbackStatus");
+    lastResult = {
+      riskNow,
+      trendDirection,
+      decisionCode
+    };
 
-  if (!lastResult) {
-    status.innerText = "Errore: nessun dato";
-    return;
-  }
-
-  status.innerText = "Invio...";
-
-  try {
-    await fetch(SCRIPT_URL, {
-      method: "POST",
-      mode: "no-cors",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...lastResult, feedback: type })
-    });
-
-    status.innerText = "Feedback inviato";
   } catch (e) {
-    status.innerText = "Errore invio";
+    resultDiv.innerText = "Errore";
   }
 }
 </script>
