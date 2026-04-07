@@ -43,10 +43,13 @@
 <div id="result" style="white-space: pre-line; font-size:18px;"></div>
 
 <div id="feedbackBox" style="display:none; margin-top:20px;">
-  <strong>Feedback:</strong><br><br>
-  <button onclick="sendFeedback('ok')">👍</button>
-  <button onclick="sendFeedback('meh')">😐</button>
-  <button onclick="sendFeedback('no')">👎</button>
+  <strong>Com’è la tua sensazione rispetto alla previsione?</strong><br>
+  <br>
+
+  <button onclick="sendFeedback('too_warm')">Fa più caldo</button>
+  <button onclick="sendFeedback('correct')">Giusto</button>
+  <button onclick="sendFeedback('too_cold')">Fa più freddo</button>
+
   <div id="feedbackStatus" style="margin-top:10px;"></div>
 </div>
 
@@ -56,6 +59,54 @@ const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxo-0iSNwMqWwJVKuBTZ
 let lastResult = null;
 let selectedCity = null;
 let debounceTimer;
+
+/* =========================
+   COPY UTILS
+========================= */
+
+function pick(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+const feelingMap = {
+  cold: ["È freddo", "Fa freddo", "Si sente freddo"],
+  cool: ["È fresco", "Si sente fresco", "Si sente del fresco"],
+  slightly_cool: ["È leggermente fresco", "Non è freddo, ma si sente fresco", "Si sente un po’ di fresco"],
+  mild_warm: ["È mite", "Si sta bene", "Temperatura mite"]
+};
+
+const shadeLabels = ["All’ombra", "Senza sole"];
+const sunLabels = ["Al sole", "Sotto il sole"];
+
+const sunExtras = [
+  "al sole si sente più caldo",
+  "al sole il calore si sente di più"
+];
+
+const warmingMap = [
+  "Poi si sente più caldo.",
+  "Poi il calore si fa sentire di più."
+];
+
+const coolingMap = [
+  "Poi si sente più fresco.",
+  "Poi si rinfresca un po’."
+];
+
+const stableMap = [
+  "Poi non cambierà molto.",
+  "Poi rimane stabile."
+];
+
+const layerAdvice = [
+  "Meglio avere uno strato in più addosso.",
+  "Può servire uno strato in più per non sentire freddo."
+];
+
+const noLayerAdvice = [
+  "Non dovrebbe esserci bisogno di uno strato in più o in meno.",
+  "Non serve aggiungere o togliere strati."
+];
 
 /* =========================
    UI
@@ -102,10 +153,13 @@ document.getElementById("cityInput").addEventListener("input", function () {
 
       box.innerHTML = "";
 
-      if (!data.results) return;
+      if (!data || !data.results) return;
 
       data.results.forEach(r => {
         const div = document.createElement("div");
+        div.style.padding = "6px";
+        div.style.cursor = "pointer";
+        div.style.borderBottom = "1px solid #eee";
         div.innerText = `${r.name}, ${r.country}`;
         div.onclick = () => {
           selectedCity = r;
@@ -114,7 +168,9 @@ document.getElementById("cityInput").addEventListener("input", function () {
         };
         box.appendChild(div);
       });
-    } catch {}
+    } catch (e) {
+      console.error("Errore città:", e);
+    }
   }, 300);
 });
 
@@ -139,17 +195,14 @@ function computeScore(p, profile) {
 }
 
 function classifyFeeling(score) {
-  if (score < 8) return "È freddo";
-  if (score < 14) return "È fresco";
-  if (score < 18) return "È leggermente fresco";
-  return "È mite";
+  if (score < 8) return "cold";
+  if (score < 14) return "cool";
+  if (score < 18) return "slightly_cool";
+  return "mild_warm";
 }
 
-function getFeelingKey(f) {
-  if (f === "È freddo") return "cold";
-  if (f === "È fresco") return "cool";
-  if (f === "È leggermente fresco") return "slightly_cool";
-  return "mild_warm";
+function renderFeeling(feelingKey) {
+  return pick(feelingMap[feelingKey]);
 }
 
 /* =========================
@@ -174,7 +227,6 @@ function getTrendDirection(fNow, fNext) {
 }
 
 function getDecision(risk, trend) {
-
   if (risk === "high_cold") {
     if (trend === "warming") return "layer_now_remove_later";
     return "layer_now";
@@ -195,20 +247,71 @@ function getDecision(risk, trend) {
     return "no_layer";
   }
 
+  return "no_layer";
 }
 
 function decisionText(code) {
-  const map = {
-    layer_now: "Meglio coprirsi.",
-    layer_now_remove_later: "Meglio coprirsi all’inizio, poi puoi alleggerirti.",
-    light_layer: "Meglio uno strato leggero.",
-    light_layer_optional: "Uno strato leggero può essere utile.",
-    consider_layer: "Potresti volere uno strato in più.",
-    no_layer_needed: "Potresti toglierti uno strato.",
-    maybe_layer_later: "Ora va bene così, ma dopo potresti coprirti.",
-    no_layer: "Si sta bene così."
-  };
-  return map[code];
+  const layerCodes = [
+    "layer_now",
+    "layer_now_remove_later",
+    "light_layer",
+    "light_layer_optional",
+    "consider_layer"
+  ];
+
+  if (layerCodes.includes(code)) {
+    return pick(layerAdvice);
+  }
+
+  return pick(noLayerAdvice);
+}
+
+/* =========================
+   SOLE / OMBRA
+========================= */
+
+function computeSunBoost(p) {
+  if (!(p.is_day === 1 && p.cloudcover < 20)) return 0;
+
+  let windLevel = 0;
+  if (p.wind_speed > 20) windLevel = 2;
+  else if (p.wind_speed > 10) windLevel = 1;
+
+  if (windLevel === 0) return 4;
+  if (windLevel === 1) return 2.5;
+  return 1;
+}
+
+/* =========================
+   FEEDBACK
+========================= */
+
+async function sendFeedback(type) {
+  const status = document.getElementById("feedbackStatus");
+
+  if (!lastResult) {
+    status.innerText = "Errore: nessun dato da inviare";
+    return;
+  }
+
+  status.innerText = "Invio...";
+
+  try {
+    await fetch(SCRIPT_URL, {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...lastResult,
+        perceived_error: type
+      })
+    });
+
+    status.innerText = "Feedback inviato";
+  } catch (e) {
+    console.error("Errore invio feedback:", e);
+    status.innerText = "Errore invio";
+  }
 }
 
 /* =========================
@@ -216,23 +319,44 @@ function decisionText(code) {
 ========================= */
 
 async function checkWeather() {
-
   const resultDiv = document.getElementById("result");
+  const feedbackBox = document.getElementById("feedbackBox");
+  const feedbackStatus = document.getElementById("feedbackStatus");
+
+  resultDiv.innerText = "Caricamento...";
+  feedbackBox.style.display = "none";
+  feedbackStatus.innerText = "";
+  lastResult = null;
 
   try {
-
     const dt = document.getElementById("datetime").value;
-    let lat, lon;
 
-    if (document.querySelector('input[name="mode"]:checked').value === "city") {
+    if (!dt) {
+      resultDiv.innerText = "Seleziona data e ora";
+      return;
+    }
+
+    let lat, lon, locationLabel;
+    const mode = document.querySelector('input[name="mode"]:checked').value;
+
+    if (mode === "city") {
+      if (!selectedCity) {
+        resultDiv.innerText = "Seleziona una città dalla lista";
+        return;
+      }
       lat = selectedCity.latitude;
       lon = selectedCity.longitude;
+      locationLabel = `${selectedCity.name}, ${selectedCity.country}`;
     } else {
-      const pos = await new Promise(res =>
-        navigator.geolocation.getCurrentPosition(res)
+      const pos = await new Promise((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(
+          resolve,
+          () => reject(new Error("GEO_DENIED"))
+        )
       );
       lat = pos.coords.latitude;
       lon = pos.coords.longitude;
+      locationLabel = "Posizione attuale";
     }
 
     const res = await fetch(
@@ -240,6 +364,11 @@ async function checkWeather() {
     );
 
     const data = await res.json();
+
+    if (!data || !data.hourly || !data.hourly.time) {
+      resultDiv.innerText = "Dati meteo non disponibili";
+      return;
+    }
 
     const times = data.hourly.time;
     const target = new Date(dt).getTime();
@@ -261,8 +390,8 @@ async function checkWeather() {
       apparent_temperature: data.hourly.apparent_temperature[idx],
       wind_speed: data.hourly.wind_speed_10m[idx],
       wind_gusts: data.hourly.wind_gusts_10m[idx],
-      humidity: data.hourly.relative_humidity_2m[idx],
-      cloudcover: data.hourly.cloudcover[idx],
+      humidity: data.hourly.relative_humidity_2m[idx] ?? 50,
+      cloudcover: data.hourly.cloudcover[idx] ?? 0,
       is_day: data.hourly.is_day[idx]
     };
 
@@ -271,55 +400,115 @@ async function checkWeather() {
       wind_speed: data.hourly.wind_speed_10m[nextIdx],
       wind_gusts: data.hourly.wind_gusts_10m[nextIdx],
       humidity: data.hourly.relative_humidity_2m[nextIdx],
-      cloudcover: data.hourly.cloudcover[nextIdx],
+      cloudcover: data.hourly.cloudcover[nextIdx] ?? 0,
       is_day: data.hourly.is_day[nextIdx]
     };
 
-    const profile = parseInt(document.getElementById("profile").value);
+    const profile = parseInt(document.getElementById("profile").value, 10);
+    const profileLabel = document.getElementById("profile").selectedOptions[0].text;
 
     const sNow = computeScore(now, profile);
     const sNext = computeScore(next, profile);
 
-    const fNow = classifyFeeling(sNow);
-    const fNext = classifyFeeling(sNext);
+    const fNowKey = classifyFeeling(sNow);
+    const fNextKey = classifyFeeling(sNext);
 
-    const keyNow = getFeelingKey(fNow);
-    const keyNext = getFeelingKey(fNext);
+    const fNowText = renderFeeling(fNowKey);
 
-    /* =========================
-       DECISION
-    ========================= */
-
-    const riskNow = getRisk(keyNow);
-    const trendDirection = getTrendDirection(keyNow, keyNext);
+    const riskNow = getRisk(fNowKey);
+    const trendDirection = getTrendDirection(fNowKey, fNextKey);
     const decisionCode = getDecision(riskNow, trendDirection);
 
-    /* =========================
-       OUTPUT
-    ========================= */
+    const sunBoostNow = computeSunBoost(now);
+    const sShade = sNow;
+    const sSun = sNow + sunBoostNow;
+
+    const fShadeKey = classifyFeeling(sShade);
+    const fSunKey = classifyFeeling(sSun);
+
+    const fShadeText = renderFeeling(fShadeKey);
+    const fSunText = renderFeeling(fSunKey);
+
+    const hasSunDifference = (fShadeKey !== fSunKey);
+    const strongSunPerception = sunBoostNow >= 2.5 && fShadeKey === fSunKey;
 
     let trendText = "";
 
-if (trendDirection === "warming") {
-  trendText = "Poi si scalda un po’.";
-} else if (trendDirection === "cooling") {
-  trendText = "Poi si rinfresca un po’.";
-} else {
-  trendText = "Resta più o meno così.";
-}
+    if (trendDirection === "warming") {
+      trendText = pick(warmingMap);
+    } else if (trendDirection === "cooling") {
+      trendText = pick(coolingMap);
+    } else {
+      trendText = pick(stableMap);
+    }
 
-resultDiv.innerText =
-  fNow + "\n\n" +
-  trendText + "\n\n" +
-  decisionText(decisionCode);
+    let baseText = "";
+
+    if (hasSunDifference || strongSunPerception) {
+      let sunLineText = fSunText;
+
+      if (!hasSunDifference && strongSunPerception) {
+        sunLineText += " (" + pick(sunExtras) + ")";
+      }
+
+      baseText =
+        pick(shadeLabels) + ": " + fShadeText + "\n" +
+        pick(sunLabels) + ": " + sunLineText;
+    } else {
+      baseText = fNowText;
+    }
+
+    const decision = decisionText(decisionCode);
+
+    resultDiv.innerText =
+      baseText + "\n\n" +
+      trendText + "\n\n" +
+      decision;
 
     lastResult = {
-      riskNow,
-      trendDirection,
-      decisionCode
-    };
+      timestamp: new Date().toISOString(),
+
+      profile: document.getElementById("profile").selectedOptions[0].text,
+
+      lat: lat,
+      long: lon,
+      location_label: locationLabel,
+
+      selected_datetime: times[idx],
+
+      apparent_temperature: now.apparent_temperature,
+      wind: now.wind_speed,
+      gusts: now.wind_gusts,
+      humidity: now.humidity,
+      cloudcover: now.cloudcover,
+
+      feeling: fNowText,
+
+      driver: hasSunDifference || strongSunPerception
+        ? "sun_exposure"
+        : "base",
+
+      note: hasSunDifference
+        ? "shade_vs_sun"
+        : strongSunPerception
+        ? "strong_sun"
+        : "none",
+
+      trend: trendText,
+
+      feedback: null   // mantiene compatibilità col vecchio schema
+  };
+
+    feedbackBox.style.display = "block";
 
   } catch (e) {
+    console.error(e);
+
+    if (e.message === "GEO_DENIED") {
+      resultDiv.innerText = "Posizione non disponibile";
+      return;
+    }
+
     resultDiv.innerText = "Errore";
   }
 }
