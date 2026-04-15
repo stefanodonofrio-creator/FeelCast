@@ -44,9 +44,32 @@
 
 <div id="feedbackBox" style="display:none; margin-top:20px;">
   <strong>Com’è la tua sensazione rispetto alla previsione?</strong><br><br>
-  <button onclick="sendFeedback('too_warm')" style="margin-right:8px;">🥵 Fa più caldo</button>
-  <button onclick="sendFeedback('correct')" style="margin-right:8px;">✅ Giusto</button>
-  <button onclick="sendFeedback('too_cold')">🥶 Fa più freddo</button>
+  <div style="display:flex; gap:12px; margin-bottom:10px;">
+  
+  <label style="cursor:pointer;">
+    <input type="radio" name="perceived" value="too_warm">
+    🥵 Fa più caldo
+  </label>
+
+  <label style="cursor:pointer;">
+    <input type="radio" name="perceived" value="correct">
+    ✅ Giusto
+  </label>
+
+  <label style="cursor:pointer;">
+    <input type="radio" name="perceived" value="too_cold">
+    🥶 Fa più freddo
+  </label>
+
+</div>
+
+  <textarea id="freeFeedback" placeholder="Vuoi aggiungere un commento? (opzionale)" 
+  style="display:block; width:100%; max-width:400px; margin-top:10px;"></textarea>
+
+  <button onclick="sendFeedback()" style="margin-top:10px;">
+  	Invia feedback
+  </button>
+
   <div id="feedbackStatus" style="margin-top:10px;"></div>
 </div>
 
@@ -415,11 +438,20 @@ function getTrendText(trendDirection) {
    FEEDBACK
 ========================= */
 
-async function sendFeedback(type) {
+async function sendFeedback() {
   const status = document.getElementById("feedbackStatus");
+  const comment = document.getElementById("freeFeedback").value;
+
+  const selected = document.querySelector('input[name="perceived"]:checked');
+  const perceived = selected ? selected.value : "";
 
   if (!lastResult) {
     status.innerText = "Errore: nessun dato da inviare";
+    return;
+  }
+
+  if (!perceived && !comment.trim()) {
+    status.innerText = "Seleziona un’opzione o scrivi un commento";
     return;
   }
 
@@ -432,11 +464,16 @@ async function sendFeedback(type) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ...lastResult,
-        perceived_error: type
+        perceived_error: perceived,
+        comment: comment
       })
     });
 
     status.innerText = "Feedback inviato";
+
+    document.getElementById("freeFeedback").value = "";
+    document.querySelectorAll('input[name="perceived"]').forEach(el => el.checked = false);
+
   } catch (e) {
     console.error("Errore invio feedback:", e);
     status.innerText = "Errore invio";
