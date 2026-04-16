@@ -8,70 +8,72 @@
 
 <body style="font-family: Arial; padding:20px; max-width:750px; margin:auto;">
 
-<h2>FeelCast</h2>
-<p style="color:#555;">Not the weather. The feeling.</p>
+  <h2>FeelCast</h2>
+  <p style="color:#555;">Not the weather. The feeling.</p>
 
-<label><strong>Profilo:</strong></label><br>
-<select id="profile">
-  <option value="0">Neutro</option>
-  <option value="-1">Freddoloso</option>
-  <option value="1">Caloroso</option>
-</select>
+  <label><strong>Profilo:</strong></label><br>
+  <select id="profile">
+    <option value="0">Neutro</option>
+    <option value="-1">Freddoloso</option>
+    <option value="1">Caloroso</option>
+  </select>
 
-<br><br>
+  <br><br>
 
-<label><strong>Luogo:</strong></label><br>
-<input type="radio" name="mode" value="geo" checked> Posizione attuale<br>
-<input type="radio" name="mode" value="city"> Cerca città
+  <label><strong>Luogo:</strong></label><br>
+  <input type="radio" name="mode" value="geo" checked> Posizione attuale<br>
+  <input type="radio" name="mode" value="city"> Cerca città
 
-<div id="cityBox" style="display:none; margin-top:10px;">
-  <input type="text" id="cityInput" placeholder="es. Berlin" style="width:100%; max-width:400px;">
-  <div id="suggestions" style="border:1px solid #ddd; max-width:400px;"></div>
-</div>
+  <div id="cityBox" style="display:none; margin-top:10px;">
+    <input type="text" id="cityInput" placeholder="es. Berlin" style="width:100%; max-width:400px;">
+    <div id="suggestions" style="border:1px solid #ddd; max-width:400px;"></div>
+  </div>
 
-<br>
+  <br>
 
-<label><strong>Data e ora:</strong></label><br>
-<input type="datetime-local" id="datetime">
+  <label><strong>Data e ora:</strong></label><br>
+  <input type="datetime-local" id="datetime">
 
-<br><br>
+  <br><br>
 
-<button onclick="checkWeather()">Controlla</button>
+  <button onclick="checkWeather()">Controlla</button>
 
-<hr>
+  <hr>
 
-<div id="result" style="white-space: pre-line; font-size:18px;"></div>
+  <div id="result" style="white-space: pre-line; font-size:18px;"></div>
 
-<div id="feedbackBox" style="display:none; margin-top:20px;">
-  <strong>Com’è la tua sensazione rispetto alla previsione?</strong><br><br>
-  <div style="display:flex; gap:12px; margin-bottom:10px;">
-  
-  <label style="cursor:pointer;">
-    <input type="radio" name="perceived" value="too_warm">
-    🥵 Fa più caldo
-  </label>
+  <div id="feedbackBox" style="display:none; margin-top:20px;">
+    <strong>Com’è la tua sensazione rispetto alla previsione?</strong><br><br>
 
-  <label style="cursor:pointer;">
-    <input type="radio" name="perceived" value="correct">
-    ✅ Giusto
-  </label>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:10px;">
+      <label style="cursor:pointer;">
+        <input type="radio" name="perceived" value="too_warm">
+        🥵 Fa più caldo
+      </label>
 
-  <label style="cursor:pointer;">
-    <input type="radio" name="perceived" value="too_cold">
-    🥶 Fa più freddo
-  </label>
+      <label style="cursor:pointer;">
+        <input type="radio" name="perceived" value="correct">
+        ✅ Giusto
+      </label>
 
-</div>
+      <label style="cursor:pointer;">
+        <input type="radio" name="perceived" value="too_cold">
+        🥶 Fa più freddo
+      </label>
+    </div>
 
-  <textarea id="freeFeedback" placeholder="Vuoi aggiungere un commento? (opzionale)" 
-  style="display:block; width:100%; max-width:400px; margin-top:10px;"></textarea>
+    <textarea
+      id="freeFeedback"
+      placeholder="Vuoi aggiungere un commento? (opzionale)"
+      style="display:block; width:100%; max-width:400px; min-height:70px;"
+    ></textarea>
 
-  <button onclick="sendFeedback()" style="margin-top:10px;">
-  	Invia feedback
-  </button>
+    <button onclick="sendFeedback()" style="margin-top:10px;">
+      Invia feedback
+    </button>
 
-  <div id="feedbackStatus" style="margin-top:10px;"></div>
-</div>
+    <div id="feedbackStatus" style="margin-top:10px;"></div>
+  </div>
 
 <script>
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxo-0iSNwMqWwJVKuBTZ3uIiqTRWxsdtLS_0hIHStYvVh7i3gni9lAqXsGHgynfsAdC9g/exec";
@@ -91,7 +93,7 @@ document.querySelectorAll('input[name="mode"]').forEach(radio => {
   });
 });
 
-(function () {
+(function initializeDatetime() {
   const now = new Date();
   const rounded = new Date(now);
 
@@ -129,7 +131,10 @@ document.getElementById("cityInput").addEventListener("input", function () {
         `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=5`
       );
 
-      if (!res.ok) return;
+      if (!res.ok) {
+        box.innerHTML = "";
+        return;
+      }
 
       const data = await res.json();
       box.innerHTML = "";
@@ -153,6 +158,7 @@ document.getElementById("cityInput").addEventListener("input", function () {
       });
     } catch (e) {
       console.error("Errore città:", e);
+      box.innerHTML = "";
     }
   }, 300);
 });
@@ -163,21 +169,52 @@ document.getElementById("cityInput").addEventListener("input", function () {
 
 const FEELING_THRESHOLDS = {
   very_cold: 5,
-  cold: 10,
-  ok: 18,
-  warm: 24
+  cold: 12,
+  cool: 17,
+  ok: 23,
+  warm: 28
 };
 
 function classifyFeeling(score) {
   if (score < FEELING_THRESHOLDS.very_cold) return "very_cold";
   if (score < FEELING_THRESHOLDS.cold) return "cold";
+  if (score < FEELING_THRESHOLDS.cool) return "cool";
   if (score < FEELING_THRESHOLDS.ok) return "ok";
   if (score < FEELING_THRESHOLDS.warm) return "warm";
   return "very_warm";
 }
 
 /* =========================
-   SCORE
+   DATA EXTRACTION
+========================= */
+
+function extractPoint(hourly, index) {
+  return {
+    apparent_temperature: hourly.apparent_temperature?.[index],
+    wind_speed: hourly.wind_speed_10m?.[index],
+    wind_gusts: hourly.wind_gusts_10m?.[index],
+    humidity: hourly.relative_humidity_2m?.[index],
+    cloudcover: hourly.cloudcover?.[index] ?? 0,
+    is_day: hourly.is_day?.[index],
+    precipitation: hourly.precipitation?.[index] ?? 0,
+    rain: hourly.rain?.[index] ?? 0,
+    snowfall: hourly.snowfall?.[index] ?? 0,
+    weathercode: hourly.weathercode?.[index] ?? null
+  };
+}
+
+function isPointValid(point) {
+  return ![
+    point.apparent_temperature,
+    point.wind_speed,
+    point.wind_gusts,
+    point.humidity,
+    point.is_day
+  ].some(v => v == null || Number.isNaN(v));
+}
+
+/* =========================
+   WEATHER TYPES
 ========================= */
 
 function getPrecipitationType(point) {
@@ -186,60 +223,102 @@ function getPrecipitationType(point) {
   const rain = point.rain ?? 0;
   const precipitation = point.precipitation ?? 0;
 
-  if (rain > 0) {
-    if (rain < 1) return "rain_light";
-    if (rain < 3) return "rain_moderate";
-    return "rain_heavy";
-  }
-
-  if (precipitation > 0) {
-    if (precipitation < 1) return "rain_light";
-    if (precipitation < 3) return "rain_moderate";
-    return "rain_heavy";
+  if (rain > 0 || precipitation > 0.2) {
+    const ref = Math.max(rain, precipitation);
+    if (ref > 1) return "rain_heavy";
+    return "rain_light";
   }
 
   return "none";
 }
 
-function isSnowImpactful(point) {
-  if ((point.snowfall ?? 0) <= 0) return false;
-  return point.apparent_temperature <= 0 || point.wind_speed > 20 || point.wind_gusts > 30;
+/* =========================
+   SCORE COMPONENTS
+========================= */
+
+function getNightPenalty(point) {
+  if (point.is_day === 0) return -1;
+  return 0;
 }
 
-function computeScore(p, profile) {
-  let s = p.apparent_temperature;
+function getWindPenalty(point) {
+  let penalty = 0;
 
-  if (p.wind_speed > 20) s -= 1;
-  else if (p.wind_speed > 10) s -= 0.5;
+  if (point.wind_speed > 20) penalty -= 2;
+  else if (point.wind_speed > 10) penalty -= 1;
+  else if (point.wind_speed > 5) penalty -= 0.5;
 
-  if (p.wind_gusts > 50) s -= 1;
-  else if (p.wind_gusts > 30) s -= 0.5;
+  if (point.wind_gusts > 50) penalty -= 1;
+  else if (point.wind_gusts > 30) penalty -= 0.5;
 
-  if (p.humidity > 80 && s < 15) s -= 0.5;
+  return penalty;
+}
 
-  const precipitationType = getPrecipitationType(p);
+function getRainPenalty(point) {
+  const precipitation = Math.max(point.precipitation ?? 0, point.rain ?? 0);
+  if (precipitation > 1) return -2;
+  if (precipitation > 0.2) return -1;
+  return 0;
+}
 
-  if (precipitationType === "rain_light") s -= 0.5;
-  else if (precipitationType === "rain_moderate") s -= 1;
-  else if (precipitationType === "rain_heavy") s -= 2;
-  else if (precipitationType === "snow") {
-    if (p.apparent_temperature <= 0) s -= 0.5;
-    if (p.wind_speed > 20 || p.wind_gusts > 30) s -= 1;
+function getHumidityPenalty(point) {
+  if (point.humidity > 80 && point.apparent_temperature < 15) {
+    if (point.apparent_temperature < 10) return -1;
+    return -0.5;
   }
-
-  return s + profile;
+  return 0;
 }
 
-function computeSunBoost(p) {
-  if (!(p.is_day === 1 && p.cloudcover < 20)) return 0;
+function getSnowAdjustment(point) {
+  if ((point.snowfall ?? 0) <= 0) return 0;
 
-  let windLevel = 0;
-  if (p.wind_speed > 20) windLevel = 2;
-  else if (p.wind_speed > 10) windLevel = 1;
+  if (point.humidity > 80) return -0.5;
+  if (point.humidity < 60) return 0.5;
+  return 0;
+}
 
-  if (windLevel === 0) return 4;
-  if (windLevel === 1) return 2.5;
-  return 1;
+function getSunBoost(point) {
+  if (!(point.is_day === 1 && point.cloudcover < 20)) return 0;
+
+  if (point.wind_speed > 20) return 1;
+  if (point.wind_speed >= 10) return 2.5;
+  return 4.5;
+}
+
+/* =========================
+   MULTI-STATE SCORES
+========================= */
+
+function computeBaseScore(point, profile) {
+  let score = point.apparent_temperature;
+  score += getNightPenalty(point);
+  score += getHumidityPenalty(point);
+  score += profile;
+  return score;
+}
+
+function computeWindScore(point, profile) {
+  let score = computeBaseScore(point, profile);
+  score += getWindPenalty(point);
+  return score;
+}
+
+function computeRainScore(point, profile) {
+  let score = computeWindScore(point, profile);
+  score += getRainPenalty(point);
+  return score;
+}
+
+function computeSnowScore(point, profile) {
+  let score = computeWindScore(point, profile);
+  score += getSnowAdjustment(point);
+  return score;
+}
+
+function computeSunScore(point, profile) {
+  let score = computeBaseScore(point, profile);
+  score += getSunBoost(point);
+  return score;
 }
 
 /* =========================
@@ -247,8 +326,8 @@ function computeSunBoost(p) {
 ========================= */
 
 function isNearNow(selectedDate) {
-  const diffMin = Math.abs(selectedDate.getTime() - Date.now()) / 60000;
-  return diffMin <= 90;
+  const diffMinutes = Math.abs(selectedDate.getTime() - Date.now()) / 60000;
+  return diffMinutes <= 90;
 }
 
 function getDayLabel(date) {
@@ -289,6 +368,7 @@ function getFeelingPhrase(feelingKey, tense) {
   const presentMap = {
     very_cold: "Fa molto freddo",
     cold: "Fa freddo",
+    cool: "Fuori è fresco",
     ok: "Si sta bene",
     warm: "Fa caldo",
     very_warm: "Fa molto caldo"
@@ -297,6 +377,7 @@ function getFeelingPhrase(feelingKey, tense) {
   const futureMap = {
     very_cold: "farà molto freddo",
     cold: "farà freddo",
+    cool: "fuori sarà fresco",
     ok: "si starà bene",
     warm: "farà caldo",
     very_warm: "farà molto caldo"
@@ -305,106 +386,162 @@ function getFeelingPhrase(feelingKey, tense) {
   return tense === "present" ? presentMap[feelingKey] : futureMap[feelingKey];
 }
 
-function getSunLocalPhrase(feelingNow, feelingSun, tense) {
-  if (feelingSun === feelingNow) return "";
-
-  if (tense === "present") {
-    if (feelingNow === "very_cold" || feelingNow === "cold") return "al sole si sta meglio";
-    if (feelingSun === "warm") return "al sole fa caldo";
-    if (feelingSun === "very_warm") return "al sole fa molto caldo";
-    return "al sole si sta meglio";
+function getLocalDriverPhrase(driverType, feelingBase, feelingDriver, tense) {
+  if (driverType === "sun") {
+    if (tense === "present") {
+      return (feelingDriver === "warm" || feelingDriver === "very_warm")
+        ? "al sole fa più caldo"
+        : "al sole si sta meglio";
+    }
+    return (feelingDriver === "warm" || feelingDriver === "very_warm")
+      ? "al sole farà più caldo"
+      : "al sole si starà meglio";
   }
 
-  if (feelingNow === "very_cold" || feelingNow === "cold") return "al sole si starà meglio";
-  if (feelingSun === "warm") return "al sole farà caldo";
-  if (feelingSun === "very_warm") return "al sole farà molto caldo";
-  return "al sole si starà meglio";
+  if (driverType === "wind") {
+    return tense === "present"
+      ? "il vento lo rende più fresco sulle parti esposte"
+      : "il vento lo renderà più fresco sulle parti esposte";
+  }
+
+  if (driverType === "rain") {
+    return tense === "present"
+      ? "la pioggia raffredda"
+      : "la pioggia raffredderà";
+  }
+
+  if (driverType === "snow") {
+    return tense === "present"
+      ? "con la neve si sente più freddo"
+      : "con la neve si sentirà più freddo";
+  }
+
+  return "";
 }
 
-function buildFeelingBlock(feelingNow, feelingSun, selectedDate) {
+function buildFeelingBlock(feelingBase, primaryDriver, selectedDate) {
   const near = isNearNow(selectedDate);
   const tense = near ? "present" : "future";
-  const mainPhrase = getFeelingPhrase(feelingNow, tense);
-  const sunPhrase = getSunLocalPhrase(feelingNow, feelingSun, tense);
+  const mainPhrase = getFeelingPhrase(feelingBase, tense);
+
+  let localPhrase = "";
+  if (primaryDriver && primaryDriver.type) {
+    localPhrase = getLocalDriverPhrase(primaryDriver.type, feelingBase, primaryDriver.feeling, tense);
+  }
 
   if (near) {
-    if (sunPhrase) {
-      return `${mainPhrase} all’ombra; ${sunPhrase}.`;
-    }
-    return `${mainPhrase}.`;
+    return localPhrase ? `${mainPhrase}; ${localPhrase}.` : `${mainPhrase}.`;
   }
 
   const prefix = formatMainTimePrefix(selectedDate);
-  if (sunPhrase) {
-    return `${prefix} ${mainPhrase} all’ombra; ${sunPhrase}.`;
-  }
-  return `${prefix} ${mainPhrase}.`;
+  return localPhrase ? `${prefix} ${mainPhrase}; ${localPhrase}.` : `${prefix} ${mainPhrase}.`;
 }
 
 /* =========================
-   DRIVER
+   DRIVER STATES
 ========================= */
 
-function getDriverMain(point, feelingNow, feelingSun) {
-  const precipitationType = getPrecipitationType(point);
-  const hasRain = precipitationType === "rain_light" || precipitationType === "rain_moderate" || precipitationType === "rain_heavy";
-  const hasImpactfulSnow = precipitationType === "snow" && isSnowImpactful(point);
-  const hasWind = point.wind_speed > 10 || point.wind_gusts > 30;
-  const hasSun = point.is_day === 1 && point.cloudcover < 20 && feelingSun && feelingSun !== feelingNow;
-  const hasHumidityCold = point.humidity > 80 && (feelingNow === "very_cold" || feelingNow === "cold");
+function getDriverStates(point, profile) {
+  const scoreBase = computeBaseScore(point, profile);
+  const scoreSun = computeSunScore(point, profile);
+  const scoreWind = computeWindScore(point, profile);
+  const scoreRain = computeRainScore(point, profile);
+  const scoreSnow = computeSnowScore(point, profile);
 
-  if (hasRain) return precipitationType;
-  if (hasImpactfulSnow) return "snow";
-  if (hasWind) return "wind";
-  if (hasSun) return "sun";
-  if (hasHumidityCold) return "humidity_cold";
-  return "";
+  const feelingBase = classifyFeeling(scoreBase);
+  const feelingSun = classifyFeeling(scoreSun);
+  const feelingWind = classifyFeeling(scoreWind);
+  const feelingRain = classifyFeeling(scoreRain);
+  const feelingSnow = classifyFeeling(scoreSnow);
+
+  const drivers = [];
+
+  if (getPrecipitationType(point).startsWith("rain") && feelingRain !== feelingBase) {
+    drivers.push({ type: "rain", feeling: feelingRain, priority: 1 });
+  }
+
+  if ((point.wind_speed > 5 || point.wind_gusts > 30) && feelingWind !== feelingBase) {
+    drivers.push({ type: "wind", feeling: feelingWind, priority: 2 });
+  }
+
+  if (point.is_day === 1 && point.cloudcover < 20 && feelingSun !== feelingBase) {
+    drivers.push({ type: "sun", feeling: feelingSun, priority: 3 });
+  }
+
+  if ((point.snowfall ?? 0) > 0 && feelingSnow !== feelingBase) {
+    drivers.push({ type: "snow", feeling: feelingSnow, priority: 4 });
+  }
+
+  drivers.sort((a, b) => a.priority - b.priority);
+
+  return {
+    score_base: scoreBase,
+    score_sun: scoreSun,
+    score_wind: scoreWind,
+    score_rain: scoreRain,
+    score_snow: scoreSnow,
+
+    feeling_base: feelingBase,
+    feeling_sun: feelingSun,
+    feeling_wind: feelingWind,
+    feeling_rain: feelingRain,
+    feeling_snow: feelingSnow,
+
+    primary_driver: drivers[0] || null
+  };
 }
 
 /* =========================
    PRACTICAL ACTION
 ========================= */
 
-function getPracticalAction(feelingNow, driverMain) {
-  if (driverMain === "rain_light" || driverMain === "rain_moderate" || driverMain === "rain_heavy") {
-    return "Serve protezione dalla pioggia.";
+function getPracticalAction(feelingBase, primaryDriver) {
+  const driverType = primaryDriver?.type || "";
+
+  if (driverType === "rain") {
+    return "Serve qualcosa di impermeabile.";
   }
 
-  if (driverMain === "snow") {
-    return "Serve coprire bene le parti esposte.";
+  if (driverType === "snow") {
+    return "Meglio coprire bene mani, testa e collo.";
   }
 
-  if (feelingNow === "very_cold") {
-    if (driverMain === "wind") return "Serve protezione dal vento.";
-    if (driverMain === "humidity_cold") return "È una situazione in cui è importante proteggersi dal freddo.";
-    return "È una situazione in cui conviene restare coperti.";
+  if (feelingBase === "very_cold") {
+    if (driverType === "wind") return "Meglio proteggersi dal vento.";
+    return "Meglio coprirsi bene.";
   }
 
-  if (feelingNow === "cold") {
-    if (driverMain === "wind") return "Serve protezione dal vento.";
-    if (driverMain === "humidity_cold") return "È una situazione in cui è importante proteggersi dal freddo.";
-    return "È una situazione in cui conviene restare coperti.";
+  if (feelingBase === "cold") {
+    if (driverType === "wind") return "Meglio proteggersi dal vento.";
+    return "Meglio coprirsi bene.";
   }
 
-  if (feelingNow === "ok") {
-    if (driverMain === "wind") return "Serve coprire le parti esposte.";
-    if (driverMain === "sun") return "È una situazione da abbigliamento leggero.";
-    return "Non serve fare nulla.";
+  if (feelingBase === "cool") {
+    if (driverType === "wind") return "Il vento fa sentire più freddo: meglio coprirsi.";
+    return "Serve qualcosa da mettere addosso.";
   }
 
-  if (feelingNow === "warm") {
-    return "È una situazione da abbigliamento leggero.";
+  if (feelingBase === "ok") {
+    if (driverType === "wind") return "Il vento fa sentire più freddo: meglio coprirsi.";
+    if (driverType === "sun") return "Basta qualcosa di leggero.";
+    return "Non serve coprirsi molto.";
   }
 
-  return "È una situazione da abbigliamento molto leggero.";
+  if (feelingBase === "warm") {
+    return "Basta qualcosa di leggero.";
+  }
+
+  if (feelingBase === "very_warm") {
+    return "Meglio stare molto leggeri.";
+  }
+
+  return "";
 }
 
-function isActionCoherent(feelingNow, practicalAction) {
-  if ((feelingNow === "warm" || feelingNow === "very_warm") && /copert|freddo|vento/i.test(practicalAction)) {
-    return false;
-  }
+function isActionCoherent(feelingBase, practicalAction) {
+  if (!practicalAction) return true;
 
-  if ((feelingNow === "very_cold" || feelingNow === "cold") && /abbigliamento molto leggero/i.test(practicalAction)) {
+  if ((feelingBase === "warm" || feelingBase === "very_warm") && /copert|freddo|vento/i.test(practicalAction)) {
     return false;
   }
 
@@ -416,7 +553,7 @@ function isActionCoherent(feelingNow, practicalAction) {
 ========================= */
 
 function getTrendDirection(feelingNow, feelingNext) {
-  const order = ["very_cold", "cold", "ok", "warm", "very_warm"];
+  const order = ["very_cold", "cold", "cool", "ok", "warm", "very_warm"];
   const nowIndex = order.indexOf(feelingNow);
   const nextIndex = order.indexOf(feelingNext);
 
@@ -427,9 +564,9 @@ function getTrendDirection(feelingNow, feelingNext) {
 
 function getTrendText(trendDirection) {
   const map = {
-    warming: "Nell’ora successiva si scalda.",
-    cooling: "Nell’ora successiva si raffredda.",
-    stable: "Nell’ora successiva resta stabile."
+    warming: "Nell’ora successiva farà più caldo.",
+    cooling: "Nell’ora successiva farà più freddo.",
+    stable: "Nell’ora successiva cambia poco."
   };
   return map[trendDirection];
 }
@@ -441,7 +578,6 @@ function getTrendText(trendDirection) {
 async function sendFeedback() {
   const status = document.getElementById("feedbackStatus");
   const comment = document.getElementById("freeFeedback").value;
-
   const selected = document.querySelector('input[name="perceived"]:checked');
   const perceived = selected ? selected.value : "";
 
@@ -470,9 +606,10 @@ async function sendFeedback() {
     });
 
     status.innerText = "Feedback inviato";
-
     document.getElementById("freeFeedback").value = "";
-    document.querySelectorAll('input[name="perceived"]').forEach(el => el.checked = false);
+    document.querySelectorAll('input[name="perceived"]').forEach(el => {
+      el.checked = false;
+    });
 
   } catch (e) {
     console.error("Errore invio feedback:", e);
@@ -515,6 +652,7 @@ async function checkWeather() {
         resultDiv.innerText = "Seleziona una città dalla lista";
         return;
       }
+
       lat = selectedCity.latitude;
       lon = selectedCity.longitude;
       locationLabel = `${selectedCity.name}, ${selectedCity.country}`;
@@ -525,6 +663,7 @@ async function checkWeather() {
           () => reject(new Error("GEO_DENIED"))
         )
       );
+
       lat = pos.coords.latitude;
       lon = pos.coords.longitude;
       locationLabel = "Posizione attuale";
@@ -562,44 +701,10 @@ async function checkWeather() {
 
     const nextIdx = Math.min(idx + 1, times.length - 1);
 
-    const nowPoint = {
-      apparent_temperature: data.hourly.apparent_temperature?.[idx],
-      wind_speed: data.hourly.wind_speed_10m?.[idx],
-      wind_gusts: data.hourly.wind_gusts_10m?.[idx],
-      humidity: data.hourly.relative_humidity_2m?.[idx],
-      cloudcover: data.hourly.cloudcover?.[idx] ?? 0,
-      is_day: data.hourly.is_day?.[idx],
-      precipitation: data.hourly.precipitation?.[idx] ?? 0,
-      rain: data.hourly.rain?.[idx] ?? 0,
-      snowfall: data.hourly.snowfall?.[idx] ?? 0,
-      weathercode: data.hourly.weathercode?.[idx] ?? null
-    };
+    const nowPoint = extractPoint(data.hourly, idx);
+    const nextPoint = extractPoint(data.hourly, nextIdx);
 
-    const nextPoint = {
-      apparent_temperature: data.hourly.apparent_temperature?.[nextIdx],
-      wind_speed: data.hourly.wind_speed_10m?.[nextIdx],
-      wind_gusts: data.hourly.wind_gusts_10m?.[nextIdx],
-      humidity: data.hourly.relative_humidity_2m?.[nextIdx],
-      cloudcover: data.hourly.cloudcover?.[nextIdx] ?? 0,
-      is_day: data.hourly.is_day?.[nextIdx],
-      precipitation: data.hourly.precipitation?.[nextIdx] ?? 0,
-      rain: data.hourly.rain?.[nextIdx] ?? 0,
-      snowfall: data.hourly.snowfall?.[nextIdx] ?? 0,
-      weathercode: data.hourly.weathercode?.[nextIdx] ?? null
-    };
-
-    if (
-      nowPoint.apparent_temperature == null ||
-      nowPoint.wind_speed == null ||
-      nowPoint.wind_gusts == null ||
-      nowPoint.humidity == null ||
-      nowPoint.is_day == null ||
-      nextPoint.apparent_temperature == null ||
-      nextPoint.wind_speed == null ||
-      nextPoint.wind_gusts == null ||
-      nextPoint.humidity == null ||
-      nextPoint.is_day == null
-    ) {
+    if (!isPointValid(nowPoint) || !isPointValid(nextPoint)) {
       resultDiv.innerText = "Dati meteo incompleti";
       return;
     }
@@ -607,23 +712,20 @@ async function checkWeather() {
     const profile = parseInt(document.getElementById("profile").value, 10);
     const profileLabel = document.getElementById("profile").selectedOptions[0].text;
 
-    const sNow = computeScore(nowPoint, profile);
-    const sNext = computeScore(nextPoint, profile);
+    const nowStates = getDriverStates(nowPoint, profile);
+    const nextStates = getDriverStates(nextPoint, profile);
 
-    const sunBoostNow = computeSunBoost(nowPoint);
-    const sSun = sNow + sunBoostNow;
+    const feelingBlock = buildFeelingBlock(
+      nowStates.feeling_base,
+      nowStates.primary_driver,
+      selectedDate
+    );
 
-    const feelingNow = classifyFeeling(sNow);
-    const feelingSun = classifyFeeling(sSun);
-    const feelingNext = classifyFeeling(sNext);
-
-    const feelingBlock = buildFeelingBlock(feelingNow, feelingSun, selectedDate);
-    const driverMain = getDriverMain(nowPoint, feelingNow, feelingSun);
-    let practicalAction = getPracticalAction(feelingNow, driverMain);
-    const trendDirection = getTrendDirection(feelingNow, feelingNext);
+    let practicalAction = getPracticalAction(nowStates.feeling_base, nowStates.primary_driver);
+    const trendDirection = getTrendDirection(nowStates.feeling_base, nextStates.feeling_base);
     const trendText = getTrendText(trendDirection);
 
-    if (!isActionCoherent(feelingNow, practicalAction)) {
+    if (!isActionCoherent(nowStates.feeling_base, practicalAction)) {
       practicalAction = "";
     }
 
@@ -642,28 +744,41 @@ async function checkWeather() {
       long: lon,
       location_label: locationLabel,
       selected_datetime: times[idx],
+
       apparent_temperature: nowPoint.apparent_temperature,
       wind: nowPoint.wind_speed,
       gusts: nowPoint.wind_gusts,
       humidity: nowPoint.humidity,
       cloudcover: nowPoint.cloudcover,
-      feeling: feelingBlock,
-      driver: driverMain || "",
-      note: practicalAction,
-      feedback: null,
-      trend: trendText,
-      perceived_error: null,
 
       precipitation: nowPoint.precipitation,
       rain: nowPoint.rain,
       snowfall: nowPoint.snowfall,
       weathercode: nowPoint.weathercode,
 
-      feeling_now: feelingNow,
-      feeling_sun: feelingSun !== feelingNow ? feelingSun : "",
-      driver_main: driverMain,
+      feeling: feelingBlock,
+      driver: nowStates.primary_driver?.type || "",
+      note: practicalAction,
+      feedback: "",
+      trend: trendText,
+      perceived_error: "",
+      comment: "",
+
+      feeling_now: nowStates.feeling_base,
+      feeling_sun: nowStates.feeling_sun !== nowStates.feeling_base ? nowStates.feeling_sun : "",
+      driver_main: nowStates.primary_driver?.type || "",
       practical_action: practicalAction,
-      trend_direction: trendDirection
+      trend_direction: trendDirection,
+
+      score_base: nowStates.score_base,
+      score_sun: nowStates.score_sun,
+      score_wind: nowStates.score_wind,
+      score_rain: nowStates.score_rain,
+      score_snow: nowStates.score_snow,
+
+      feeling_wind: nowStates.feeling_wind,
+      feeling_rain: nowStates.feeling_rain,
+      feeling_snow: nowStates.feeling_snow
     };
 
     feedbackBox.style.display = "block";
