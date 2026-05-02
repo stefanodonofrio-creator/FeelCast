@@ -164,32 +164,12 @@ document.getElementById("cityInput").addEventListener("input", function () {
 });
 
 /* =========================
-   FEELING CONFIG
-========================= */
-
-const FEELING_THRESHOLDS = {
-  very_cold: 5,
-  cold: 12,
-  cool: 17,
-  ok: 23,
-  warm: 28
-};
-
-function classifyFeeling(score) {
-  if (score < FEELING_THRESHOLDS.very_cold) return "very_cold";
-  if (score < FEELING_THRESHOLDS.cold) return "cold";
-  if (score < FEELING_THRESHOLDS.cool) return "cool";
-  if (score < FEELING_THRESHOLDS.ok) return "ok";
-  if (score < FEELING_THRESHOLDS.warm) return "warm";
-  return "very_warm";
-}
-
-/* =========================
-   DATA EXTRACTION
+   EXTRACTION
 ========================= */
 
 function extractPoint(hourly, index) {
   return {
+    temperature_2m: hourly.temperature_2m?.[index],
     apparent_temperature: hourly.apparent_temperature?.[index],
     wind_speed: hourly.wind_speed_10m?.[index],
     wind_gusts: hourly.wind_gusts_10m?.[index],
@@ -198,131 +178,148 @@ function extractPoint(hourly, index) {
     is_day: hourly.is_day?.[index],
     precipitation: hourly.precipitation?.[index] ?? 0,
     rain: hourly.rain?.[index] ?? 0,
-    snowfall: hourly.snowfall?.[index] ?? 0,
-    weathercode: hourly.weathercode?.[index] ?? null
+    snowfall: hourly.snowfall?.[index] ?? 0
   };
 }
 
 function isPointValid(point) {
   return ![
+    point.temperature_2m,
     point.apparent_temperature,
     point.wind_speed,
     point.wind_gusts,
     point.humidity,
-    point.is_day
+    point.is_day,
+    point.precipitation
   ].some(v => v == null || Number.isNaN(v));
 }
 
 /* =========================
-   WEATHER TYPES
+   CLASSIFICATION
 ========================= */
 
-function getPrecipitationType(point) {
-  if ((point.snowfall ?? 0) > 0) return "snow";
+function classify(s) {
+  if (s < 4) return "very_cold";
+  if (s < 9) return "cold";
+  if (s < 14) return "cool";
+  if (s < 20) return "ok";
+  if (s < 26) return "warm";
+  return "very_warm";
+}
 
-  const rain = point.rain ?? 0;
-  const precipitation = point.precipitation ?? 0;
+/* =========================
+   SCORE
+========================= */
 
-  if (rain > 0 || precipitation > 0.2) {
-    const ref = Math.max(rain, precipitation);
-    if (ref > 1) return "rain_heavy";
-    return "rain_light";
+function computeScore(point, profile) {
+  let s = point.temperature_2m;
+
+  if (point.wind_speed > 20) s -= 2;
+  else if (point.wind_speed > 10) s -= 1;
+  else if (point.wind_speed > 5) s -= 0.5;
+
+  if (point.wind_gusts > 50) s -= 1;
+  else if (point.wind_gusts > 30) s -= 0.5;
+
+  if (point.humidity > 85 && point.temperature_2m < 12) s -= 1;
+
+  if (point.is_day === 0) s -= 1;
+
+  if (
+    point.is_day === 1 &&
+    point.cloudcover < 20 &&
+    point.wind_speed < 10 &&
+    point.temperature_2m >= 5 &&
+    point.temperature_2m <= 12
+  ) {
+    s += 1;
   }
 
-  return "none";
-}
+  let sunBoost = 0;
 
-/* =========================
-   SCORE COMPONENTS
-========================= */
-
-function getNightPenalty(point) {
-  if (point.is_day === 0) return -1;
-  return 0;
-}
-
-function getWindPenalty(point) {
-  let penalty = 0;
-
-  if (point.wind_speed > 20) penalty -= 2;
-  else if (point.wind_speed > 10) penalty -= 1;
-  else if (point.wind_speed > 5) penalty -= 0.5;
-
-  if (point.wind_gusts > 50) penalty -= 1;
-  else if (point.wind_gusts > 30) penalty -= 0.5;
-
-  return penalty;
-}
-
-function getRainPenalty(point) {
-  const precipitation = Math.max(point.precipitation ?? 0, point.rain ?? 0);
-  if (precipitation > 1) return -2;
-  if (precipitation > 0.2) return -1;
-  return 0;
-}
-
-function getHumidityPenalty(point) {
-  if (point.humidity > 80 && point.apparent_temperature < 15) {
-    if (point.apparent_temperature < 10) return -1;
-    return -0.5;
+  if (point.is_day === 1 && point.cloudcover < 20) {
+    if (point.wind_speed < 10) sunBoost = 4;
+    else if (point.wind_speed < 20) sunBoost = 2;
+    else sunBoost = 1;
   }
-  return 0;
-}
 
-function getSnowAdjustment(point) {
-  if ((point.snowfall ?? 0) <= 0) return 0;
+  let score_base = s;
+  let score_sun = s + sunBoost;
 
-  if (point.humidity > 80) return -0.5;
-  if (point.humidity < 60) return 0.5;
-  return 0;
-}
+  if (point.precipitation > 1) score_base -= 2;
+  else if (point.precipitation > 0.5) score_base -= 1;
 
-function getSunBoost(point) {
-  if (!(point.is_day === 1 && point.cloudcover < 20)) return 0;
+  const minAllowed = point.apparent_temperature - 3;
 
-  if (point.wind_speed > 20) return 1;
-  if (point.wind_speed >= 10) return 2.5;
-  return 4.5;
+  if (score_base < minAllowed) {
+    score_base = minAllowed;
+  }
+
+  if (score_sun < minAllowed) {
+    score_sun = minAllowed;
+  }
+
+  return {
+    score_base,
+    score_sun,
+    sunBoost
+  };
 }
 
 /* =========================
-   MULTI-STATE SCORES
+   DRIVER
 ========================= */
 
-function computeBaseScore(point, profile) {
-  let score = point.apparent_temperature;
-  score += getNightPenalty(point);
-  score += getHumidityPenalty(point);
-  score += profile;
-  return score;
-}
+function getDriverInfo(point, feeling_base, feeling_sun) {
+  const rainForced = point.precipitation > 0.2;
+  const windChangesState = point.wind_speed >= 10;
+  const sunChangesState =
+    point.is_day === 1 &&
+    point.cloudcover < 20 &&
+    feeling_sun !== feeling_base;
 
-function computeWindScore(point, profile) {
-  let score = computeBaseScore(point, profile);
-  score += getWindPenalty(point);
-  return score;
-}
+  const drivers = [];
 
-function computeRainScore(point, profile) {
-  let score = computeWindScore(point, profile);
-  score += getRainPenalty(point);
-  return score;
-}
+  if (rainForced) {
+    drivers.push({
+      type: "rain",
+      priority: 1
+    });
+  }
 
-function computeSnowScore(point, profile) {
-  let score = computeWindScore(point, profile);
-  score += getSnowAdjustment(point);
-  return score;
-}
+  if (windChangesState) {
+    drivers.push({
+      type: "wind",
+      priority: 2
+    });
+  }
 
-function computeSunScore(point, profile) {
-  let score = computeBaseScore(point, profile);
-  score += getSunBoost(point);
-  return score;
+  if (sunChangesState) {
+    drivers.push({
+      type: "sun",
+      priority: 3
+    });
+  }
+
+  if (point.snowfall > 0 && (point.wind_speed > 10 || point.temperature_2m <= 0)) {
+    drivers.push({
+      type: "snow",
+      priority: 4
+    });
+  }
+
+  drivers.sort((a, b) => a.priority - b.priority);
+
+  return {
+    primary: drivers[0] || null,
+    secondary: drivers[1] || null,
+    rainForced,
+    windExposedNote: point.wind_speed >= 10
+  };
 }
 
 /* =========================
-   TIME / COPY
+   COPY
 ========================= */
 
 function isNearNow(selectedDate) {
@@ -386,116 +383,68 @@ function getFeelingPhrase(feelingKey, tense) {
   return tense === "present" ? presentMap[feelingKey] : futureMap[feelingKey];
 }
 
-function getLocalDriverPhrase(driverType, feelingBase, feelingDriver, tense) {
-  if (driverType === "sun") {
-    if (tense === "present") {
-      return (feelingDriver === "warm" || feelingDriver === "very_warm")
-        ? "al sole fa più caldo"
-        : "al sole si sta meglio";
-    }
-    return (feelingDriver === "warm" || feelingDriver === "very_warm")
-      ? "al sole farà più caldo"
-      : "al sole si starà meglio";
-  }
+function getSunStatePhrase(feeling_sun, tense) {
+  const presentMap = {
+    very_cold: "fa molto freddo",
+    cold: "fa freddo",
+    cool: "è fresco",
+    ok: "si sta bene",
+    warm: "fa caldo",
+    very_warm: "fa molto caldo"
+  };
 
-  if (driverType === "wind") {
-    return tense === "present"
-      ? "il vento lo rende più fresco sulle parti esposte"
-      : "il vento lo renderà più fresco sulle parti esposte";
-  }
+  const futureMap = {
+    very_cold: "farà molto freddo",
+    cold: "farà freddo",
+    cool: "sarà fresco",
+    ok: "si starà bene",
+    warm: "farà caldo",
+    very_warm: "farà molto caldo"
+  };
 
-  if (driverType === "rain") {
-    return tense === "present"
-      ? "la pioggia raffredda"
-      : "la pioggia raffredderà";
-  }
-
-  if (driverType === "snow") {
-    return tense === "present"
-      ? "con la neve si sente più freddo"
-      : "con la neve si sentirà più freddo";
-  }
-
-  return "";
+  return tense === "present" ? presentMap[feeling_sun] : futureMap[feeling_sun];
 }
 
-function buildFeelingBlock(feelingBase, primaryDriver, selectedDate) {
+function buildFeelingBlock(feeling_base, feeling_sun, selectedDate) {
   const near = isNearNow(selectedDate);
   const tense = near ? "present" : "future";
-  const mainPhrase = getFeelingPhrase(feelingBase, tense);
-
-  let localPhrase = "";
-  if (primaryDriver && primaryDriver.type) {
-    localPhrase = getLocalDriverPhrase(primaryDriver.type, feelingBase, primaryDriver.feeling, tense);
-  }
+  const basePhrase = getFeelingPhrase(feeling_base, tense);
 
   if (near) {
-    return localPhrase ? `${mainPhrase}; ${localPhrase}.` : `${mainPhrase}.`;
+    if (feeling_base !== feeling_sun) {
+      return `${basePhrase}; al sole ${getSunStatePhrase(feeling_sun, "present")}.`;
+    }
+    return `${basePhrase}.`;
   }
 
   const prefix = formatMainTimePrefix(selectedDate);
-  return localPhrase ? `${prefix} ${mainPhrase}; ${localPhrase}.` : `${prefix} ${mainPhrase}.`;
+
+  if (feeling_base !== feeling_sun) {
+    return `${prefix} ${basePhrase}; al sole ${getSunStatePhrase(feeling_sun, "future")}.`;
+  }
+
+  return `${prefix} ${basePhrase}.`;
 }
 
-/* =========================
-   DRIVER STATES
-========================= */
+function buildDriverBlock(point, driverInfo) {
+  const parts = [];
 
-function getDriverStates(point, profile) {
-  const scoreBase = computeBaseScore(point, profile);
-  const scoreSun = computeSunScore(point, profile);
-  const scoreWind = computeWindScore(point, profile);
-  const scoreRain = computeRainScore(point, profile);
-  const scoreSnow = computeSnowScore(point, profile);
-
-  const feelingBase = classifyFeeling(scoreBase);
-  const feelingSun = classifyFeeling(scoreSun);
-  const feelingWind = classifyFeeling(scoreWind);
-  const feelingRain = classifyFeeling(scoreRain);
-  const feelingSnow = classifyFeeling(scoreSnow);
-
-  const drivers = [];
-
-  if (getPrecipitationType(point).startsWith("rain") && feelingRain !== feelingBase) {
-    drivers.push({ type: "rain", feeling: feelingRain, priority: 1 });
+  if (driverInfo.rainForced) {
+    parts.push("La pioggia raffredda.");
   }
 
-  if ((point.wind_speed > 5 || point.wind_gusts > 30) && feelingWind !== feelingBase) {
-    drivers.push({ type: "wind", feeling: feelingWind, priority: 2 });
+  if (driverInfo.windExposedNote) {
+    parts.push("Sulle parti esposte si sente più freddo.");
   }
 
-  if (point.is_day === 1 && point.cloudcover < 20 && feelingSun !== feelingBase) {
-    drivers.push({ type: "sun", feeling: feelingSun, priority: 3 });
-  }
-
-  if ((point.snowfall ?? 0) > 0 && feelingSnow !== feelingBase) {
-    drivers.push({ type: "snow", feeling: feelingSnow, priority: 4 });
-  }
-
-  drivers.sort((a, b) => a.priority - b.priority);
-
-  return {
-    score_base: scoreBase,
-    score_sun: scoreSun,
-    score_wind: scoreWind,
-    score_rain: scoreRain,
-    score_snow: scoreSnow,
-
-    feeling_base: feelingBase,
-    feeling_sun: feelingSun,
-    feeling_wind: feelingWind,
-    feeling_rain: feelingRain,
-    feeling_snow: feelingSnow,
-
-    primary_driver: drivers[0] || null
-  };
+  return parts.join(" ");
 }
 
 /* =========================
    PRACTICAL ACTION
 ========================= */
 
-function getPracticalAction(feelingBase, primaryDriver) {
+function getPracticalAction(feeling_base, primaryDriver) {
   const driverType = primaryDriver?.type || "";
 
   if (driverType === "rain") {
@@ -506,42 +455,37 @@ function getPracticalAction(feelingBase, primaryDriver) {
     return "Meglio coprire bene mani, testa e collo.";
   }
 
-  if (feelingBase === "very_cold") {
+  if (feeling_base === "very_cold") {
     if (driverType === "wind") return "Meglio proteggersi dal vento.";
     return "Meglio coprirsi bene.";
   }
 
-  if (feelingBase === "cold") {
+  if (feeling_base === "cold") {
     if (driverType === "wind") return "Meglio proteggersi dal vento.";
     return "Meglio coprirsi bene.";
   }
 
-  if (feelingBase === "cool") {
+  if (feeling_base === "cool") {
     if (driverType === "wind") return "Il vento fa sentire più freddo: meglio coprirsi.";
     return "Serve qualcosa da mettere addosso.";
   }
 
-  if (feelingBase === "ok") {
-    if (driverType === "wind") return "Il vento fa sentire più freddo: meglio coprirsi.";
+  if (feeling_base === "ok") {
     if (driverType === "sun") return "Basta qualcosa di leggero.";
     return "Non serve coprirsi molto.";
   }
 
-  if (feelingBase === "warm") {
+  if (feeling_base === "warm") {
     return "Basta qualcosa di leggero.";
   }
 
-  if (feelingBase === "very_warm") {
-    return "Meglio stare molto leggeri.";
-  }
-
-  return "";
+  return "Meglio stare molto leggeri.";
 }
 
-function isActionCoherent(feelingBase, practicalAction) {
+function isActionCoherent(feeling_base, practicalAction) {
   if (!practicalAction) return true;
 
-  if ((feelingBase === "warm" || feelingBase === "very_warm") && /copert|freddo|vento/i.test(practicalAction)) {
+  if ((feeling_base === "warm" || feeling_base === "very_warm") && /copert|freddo|vento/i.test(practicalAction)) {
     return false;
   }
 
@@ -670,7 +614,7 @@ async function checkWeather() {
     }
 
     const res = await fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=apparent_temperature,wind_speed_10m,wind_gusts_10m,relative_humidity_2m,cloudcover,is_day,precipitation,rain,snowfall,weathercode&timezone=auto`
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,apparent_temperature,wind_speed_10m,wind_gusts_10m,relative_humidity_2m,cloudcover,is_day,precipitation,rain,snowfall&timezone=auto`
     );
 
     if (!res.ok) {
@@ -712,25 +656,29 @@ async function checkWeather() {
     const profile = parseInt(document.getElementById("profile").value, 10);
     const profileLabel = document.getElementById("profile").selectedOptions[0].text;
 
-    const nowStates = getDriverStates(nowPoint, profile);
-    const nextStates = getDriverStates(nextPoint, profile);
+    const nowScores = computeScore(nowPoint, profile);
+    const nextScores = computeScore(nextPoint, profile);
 
-    const feelingBlock = buildFeelingBlock(
-      nowStates.feeling_base,
-      nowStates.primary_driver,
-      selectedDate
-    );
+    const feeling_base = classify(nowScores.score_base);
+    const feeling_sun = classify(nowScores.score_sun);
+    const feeling_next = classify(nextScores.score_base);
 
-    let practicalAction = getPracticalAction(nowStates.feeling_base, nowStates.primary_driver);
-    const trendDirection = getTrendDirection(nowStates.feeling_base, nextStates.feeling_base);
+    const driverInfo = getDriverInfo(nowPoint, feeling_base, feeling_sun);
+
+    const feelingBlock = buildFeelingBlock(feeling_base, feeling_sun, selectedDate);
+    const driverBlock = buildDriverBlock(nowPoint, driverInfo);
+
+    let practicalAction = getPracticalAction(feeling_base, driverInfo.primary);
+    const trendDirection = getTrendDirection(feeling_base, feeling_next);
     const trendText = getTrendText(trendDirection);
 
-    if (!isActionCoherent(nowStates.feeling_base, practicalAction)) {
+    if (!isActionCoherent(feeling_base, practicalAction)) {
       practicalAction = "";
     }
 
     const outputBlocks = [
       feelingBlock,
+      driverBlock,
       practicalAction,
       trendText
     ].filter(Boolean);
@@ -745,40 +693,32 @@ async function checkWeather() {
       location_label: locationLabel,
       selected_datetime: times[idx],
 
+      temperature_2m: nowPoint.temperature_2m,
       apparent_temperature: nowPoint.apparent_temperature,
       wind: nowPoint.wind_speed,
       gusts: nowPoint.wind_gusts,
       humidity: nowPoint.humidity,
       cloudcover: nowPoint.cloudcover,
-
       precipitation: nowPoint.precipitation,
       rain: nowPoint.rain,
       snowfall: nowPoint.snowfall,
-      weathercode: nowPoint.weathercode,
 
       feeling: feelingBlock,
-      driver: nowStates.primary_driver?.type || "",
+      driver: driverInfo.primary?.type || "",
       note: practicalAction,
       feedback: "",
       trend: trendText,
       perceived_error: "",
       comment: "",
 
-      feeling_now: nowStates.feeling_base,
-      feeling_sun: nowStates.feeling_sun !== nowStates.feeling_base ? nowStates.feeling_sun : "",
-      driver_main: nowStates.primary_driver?.type || "",
+      feeling_now: feeling_base,
+      feeling_sun: feeling_sun !== feeling_base ? feeling_sun : "",
+      driver_main: driverInfo.primary?.type || "",
       practical_action: practicalAction,
       trend_direction: trendDirection,
 
-      score_base: nowStates.score_base,
-      score_sun: nowStates.score_sun,
-      score_wind: nowStates.score_wind,
-      score_rain: nowStates.score_rain,
-      score_snow: nowStates.score_snow,
-
-      feeling_wind: nowStates.feeling_wind,
-      feeling_rain: nowStates.feeling_rain,
-      feeling_snow: nowStates.feeling_snow
+      score_base: nowScores.score_base,
+      score_sun: nowScores.score_sun
     };
 
     feedbackBox.style.display = "block";
